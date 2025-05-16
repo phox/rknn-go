@@ -664,10 +664,8 @@ func (d *Demo) ProcessFrame(img gocv.Mat, retChan chan<- ResultFrame,
 		img.Close()
 	}
 
-	// 释放检测对象内存
-	if detectObjs != nil {
-		detectObjs.Free()
-	}
+	// 注意：DetectionResult 接口没有 Free 方法
+	// 资源清理由 defer 语句和垃圾回收处理
 
 	retChan <- res
 }

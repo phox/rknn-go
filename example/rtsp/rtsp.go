@@ -96,6 +96,10 @@ type Demo struct {
 	renderFormat string
 	// useTracking indicates whether to use ByteTrack for object tracking
 	useTracking bool
+	// frameBuffer 用于缓存视频帧，减少卡顿
+	frameBuffer chan gocv.Mat
+	// bufferSize 缓冲区大小（帧数）
+	bufferSize int
 }
 
 // NewDemo returns and instance of Demo, a streaming HTTP server showing
@@ -251,13 +255,57 @@ func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
 	recvFrame := make(chan ResultFrame, 30)
 
 	// 创建通道以接收来自RTSP的帧
-	rtspFrames := make(chan gocv.Mat, 8)
 	closeRTSP := make(chan struct{})
 
 	// 启动RTSP流读取
-	go d.startRTSPStream(rtspFrames, closeRTSP)
+	go d.startRTSPStream(d.frameBuffer, closeRTSP)
+
+	// 用于控制输出帧率的计时器
+	outputTicker := time.NewTicker(time.Second / time.Duration(FPS))
+	defer outputTicker.Stop()
+
+	// 用于定期打印缓冲区状态的计时器
+	statsTicker := time.NewTicker(5 * time.Second)
+	defer statsTicker.Stop()
+
+	// 用于检测缓冲区状态的计时器
+	bufferCheckTicker := time.NewTicker(500 * time.Millisecond)
+	defer bufferCheckTicker.Stop()
 
 	frameNum := 0
+	// 标记是否有处理中的帧
+	processingFrame := false
+	// 记录处理延迟
+	processDelay := time.Duration(0)
+	// 记录缓冲区状态
+	bufferStatus := "Low"
+	// 记录最后一次输出时间，用于自适应帧率控制
+	lastOutputTime := time.Now()
+	// 自适应输出间隔，根据处理延迟动态调整
+	adaptiveInterval := time.Second / time.Duration(FPS)
+
+	log.Printf("开始视频流处理，缓冲区大小: %d 帧 (%.1f 秒)\n", d.bufferSize, float64(d.bufferSize)/float64(FPS))
+
+	// 预热缓冲区，等待一定数量的帧被缓存后再开始处理
+	preWarmSize := d.bufferSize / 2
+	if preWarmSize < 1 {
+		preWarmSize = 1
+	}
+
+	log.Printf("预热缓冲区，等待 %d 帧被缓存...", preWarmSize)
+	for len(d.frameBuffer) < preWarmSize {
+		time.Sleep(100 * time.Millisecond)
+		// 检查客户端是否已断开连接
+		select {
+		case <-r.Context().Done():
+			log.Printf("客户端在预热阶段断开连接\n")
+			closeRTSP <- struct{}{}
+			return
+		default:
+			// 继续等待
+		}
+	}
+	log.Printf("缓冲区预热完成，开始处理视频流")
 
 loop:
 	for {
@@ -267,14 +315,73 @@ loop:
 			closeRTSP <- struct{}{}
 			break loop
 
-		// 接收RTSP帧
-		case frame := <-rtspFrames:
-			frameNum++
+		// 定期检查缓冲区状态
+		case <-bufferCheckTicker.C:
+			// 根据缓冲区状态调整输出帧率
+			bufferLen := len(d.frameBuffer)
+			bufferCap := cap(d.frameBuffer)
 
-			go d.ProcessFrame(frame, recvFrame, fps, frameNum,
-				byteTrack, trail, true)
+			// 根据缓冲区占用比例调整输出间隔
+			if bufferLen < bufferCap/4 {
+				// 缓冲区较空，降低输出帧率以积累更多帧
+				adaptiveInterval = time.Second / time.Duration(FPS) * 3 / 2
+				bufferStatus = "Low"
+			} else if bufferLen > bufferCap*3/4 {
+				// 缓冲区较满，提高输出帧率以消耗更多帧
+				adaptiveInterval = time.Second / time.Duration(FPS) * 2 / 3
+				bufferStatus = "High"
+			} else {
+				// 缓冲区状态正常，使用标准帧率
+				adaptiveInterval = time.Second / time.Duration(FPS)
+				bufferStatus = "Middle"
+			}
+
+			// 根据处理延迟进一步调整输出间隔
+			if processDelay > adaptiveInterval {
+				// 处理时间超过了帧间隔，适当降低输出帧率
+				adaptiveInterval = processDelay * 5 / 4
+			}
+
+		// 定期打印缓冲区状态
+		case <-statsTicker.C:
+			log.Printf("缓冲区状态: %d/%d 帧 (%s), 处理延迟: %.2f ms, 输出帧率: %.2f fps\n",
+				len(d.frameBuffer), d.bufferSize,
+				bufferStatus,
+				float64(processDelay)/float64(time.Millisecond),
+				fps)
+
+		// 按自适应间隔从缓冲区获取帧并处理
+		case <-outputTicker.C:
+			// 检查是否达到自适应输出间隔
+			if time.Since(lastOutputTime) < adaptiveInterval {
+				continue
+			}
+
+			// 只有当没有正在处理的帧时才开始新的处理
+			if !processingFrame {
+				// 从缓冲区获取一帧
+				select {
+				case frame := <-d.frameBuffer:
+					frameNum++
+					processingFrame = true
+					processStart := time.Now()
+					lastOutputTime = processStart
+
+					// 异步处理帧
+					go func(f gocv.Mat, num int, startTime time.Time) {
+						d.ProcessFrame(f, recvFrame, fps, num, byteTrack, trail, true)
+						// 更新处理延迟
+						processDelay = time.Since(startTime)
+					}(frame, frameNum, processStart)
+				default:
+					// 缓冲区为空，等待下一个周期
+				}
+			}
 
 		case buf := <-recvFrame:
+			// 标记处理完成
+			processingFrame = false
+
 			if buf.Err != nil {
 				log.Printf("Error occured during ProcessFrame: %v", buf.Err)
 			} else {
@@ -312,12 +419,27 @@ func (d *Demo) startRTSPStream(framesCh chan gocv.Mat, exitCh chan struct{}) {
 	var rtspStream *gocv.VideoCapture
 
 	rtspURL := d.rtspSrc.GetRTSPURL()
-	log.Printf("Connecting to RTSP stream: %s\n", rtspURL)
+	log.Printf("正在连接RTSP流: %s\n", rtspURL)
 
-	rtspStream, err = gocv.OpenVideoCapture(rtspURL)
+	// 连接重试计数器
+	retryCount := 0
+	maxRetries := 10
+	connected := false
 
-	if err != nil {
-		log.Printf("Error opening RTSP stream: %v", err)
+	// 连接RTSP流，带重试
+	for retryCount < maxRetries && !connected {
+		rtspStream, err = gocv.OpenVideoCapture(rtspURL)
+		if err != nil {
+			retryCount++
+			log.Printf("连接RTSP流失败 (尝试 %d/%d): %v", retryCount, maxRetries, err)
+			time.Sleep(2 * time.Second)
+		} else {
+			connected = true
+		}
+	}
+
+	if !connected {
+		log.Printf("无法连接到RTSP流，达到最大重试次数: %d", maxRetries)
 		return
 	}
 
@@ -326,7 +448,7 @@ func (d *Demo) startRTSPStream(framesCh chan gocv.Mat, exitCh chan struct{}) {
 	// 获取视频流的实际宽高
 	width := int(rtspStream.Get(gocv.VideoCaptureFrameWidth))
 	height := int(rtspStream.Get(gocv.VideoCaptureFrameHeight))
-	log.Printf("RTSP stream connected, resolution: %dx%d\n", width, height)
+	log.Printf("RTSP流连接成功，分辨率: %dx%d\n", width, height)
 
 	// 更新resizer使用实际分辨率
 	if width > 0 && height > 0 {
@@ -339,39 +461,106 @@ func (d *Demo) startRTSPStream(framesCh chan gocv.Mat, exitCh chan struct{}) {
 	rtspImg := gocv.NewMat()
 	defer rtspImg.Close()
 
+	// 用于控制读取速率的计时器
+	readTicker := time.NewTicker(time.Second / time.Duration(FPS))
+	defer readTicker.Stop()
+
+	// 用于监控连续错误的计数器
+	consecutiveErrors := 0
+	maxConsecutiveErrors := 5
+
+	// 用于记录缓冲区统计信息
+	frameCount := 0
+	droppedFrames := 0
+
+	// 每30秒打印一次缓冲区统计信息
+	statsTicker := time.NewTicker(30 * time.Second)
+	defer statsTicker.Stop()
+
 loop:
 	for {
 		select {
 		case <-exitCh:
-			log.Printf("Closing RTSP stream")
+			log.Printf("关闭RTSP流")
 			break loop
 
-		default:
-			if ok := rtspStream.Read(&rtspImg); !ok {
-				// 读取RTSP帧出错，尝试重新连接
-				log.Printf("Error reading RTSP frame, attempting to reconnect...")
-				rtspStream.Close()
-				time.Sleep(2 * time.Second)
+		case <-statsTicker.C:
+			// 打印缓冲区统计信息
+			log.Printf("RTSP流统计: 总帧数=%d, 丢弃帧数=%d, 丢帧率=%.2f%%, 缓冲区使用=%d/%d",
+				frameCount, droppedFrames,
+				float64(droppedFrames)/float64(max(frameCount, 1))*100.0,
+				len(d.frameBuffer), cap(d.frameBuffer))
 
-				rtspStream, err = gocv.OpenVideoCapture(rtspURL)
-				if err != nil {
-					log.Printf("Failed to reconnect to RTSP stream: %v", err)
-					time.Sleep(5 * time.Second)
+		case <-readTicker.C:
+			if ok := rtspStream.Read(&rtspImg); !ok {
+				// 读取RTSP帧出错，计数连续错误
+				consecutiveErrors++
+				log.Printf("读取RTSP帧错误 (%d/%d)，准备重新连接...", consecutiveErrors, maxConsecutiveErrors)
+
+				// 如果连续错误超过阈值，重新连接
+				if consecutiveErrors >= maxConsecutiveErrors {
+					log.Printf("连续错误达到阈值，重新连接RTSP流")
+					rtspStream.Close()
+					time.Sleep(2 * time.Second)
+
+					// 重置连接
+					retryCount = 0
+					connected = false
+
+					// 尝试重新连接
+					for retryCount < maxRetries && !connected {
+						rtspStream, err = gocv.OpenVideoCapture(rtspURL)
+						if err != nil {
+							retryCount++
+							log.Printf("重新连接RTSP流失败 (尝试 %d/%d): %v", retryCount, maxRetries, err)
+							time.Sleep(3 * time.Second)
+						} else {
+							connected = true
+							consecutiveErrors = 0 // 重置错误计数
+							log.Printf("RTSP流重新连接成功")
+						}
+					}
+
+					if !connected {
+						log.Printf("无法重新连接到RTSP流，将在10秒后重试")
+						time.Sleep(10 * time.Second)
+					}
 				}
 				continue
 			}
+
+			// 成功读取帧，重置错误计数
+			consecutiveErrors = 0
+
 			if rtspImg.Empty() {
 				continue
 			}
 
-			// 发送帧到通道，复制以避免竞态条件
-			frameCopy := rtspImg.Clone()
-			framesCh <- frameCopy
+			// 更新总帧数计数
+			frameCount++
 
-			// 添加一个小延迟以避免过度消耗CPU
-			time.Sleep(time.Millisecond * 10)
+			// 发送帧到缓冲区，复制以避免竞态条件
+			frameCopy := rtspImg.Clone()
+
+			// 尝试将帧放入缓冲区，如果缓冲区已满则丢弃最旧的帧
+			select {
+			case d.frameBuffer <- frameCopy:
+				// 成功添加到缓冲区
+			default:
+				// 缓冲区已满，丢弃当前帧
+				frameCopy.Close()
+				droppedFrames++
+			}
 		}
 	}
+}
+
+// max 返回两个整数中的较大值
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // ProcessFrame 从视频中获取图像并对其运行推理/对象检测，
@@ -384,29 +573,35 @@ func (d *Demo) ProcessFrame(img gocv.Mat, retChan chan<- ResultFrame,
 		ProcessStart: time.Now(),
 	}
 
-	resImg := gocv.NewMat()
-	defer resImg.Close()
-
-	// 复制源图像
-	img.CopyTo(&resImg)
+	// 直接使用输入图像而不是复制，减少内存使用
+	resImg := img
+	if !closeImg {
+		// 如果不能关闭原图像，则需要复制
+		resImgCopy := gocv.NewMat()
+		img.CopyTo(&resImgCopy)
+		resImg = resImgCopy
+		defer resImgCopy.Close()
+	}
 
 	// 对帧运行对象检测
 	detectObjs, err := d.DetectObjects(resImg, frameNum, timing)
 
 	if err != nil {
 		log.Printf("Error detecting objects: %v", err)
+		if closeImg {
+			img.Close()
+		}
 		retChan <- ResultFrame{Err: err}
 		return
 	}
 
 	if detectObjs == nil {
 		// 未检测到对象
+		// 编码图像为JPEG格式，使用较低的质量提高性能
+		buf, err := gocv.IMEncodeWithParams(".jpg", resImg, []int{gocv.IMWriteJpegQuality, 80})
 		if closeImg {
 			img.Close()
 		}
-
-		// 编码图像为JPEG格式
-		buf, err := gocv.IMEncode(".jpg", resImg)
 		retChan <- ResultFrame{Buf: buf, Err: err}
 		return
 	}
@@ -456,8 +651,8 @@ func (d *Demo) ProcessFrame(img gocv.Mat, retChan chan<- ResultFrame,
 	d.AnnotateImg(resImg, detectResults, trackObjs, segMask, keyPoints,
 		trail, fps, frameNum, timing)
 
-	// 编码图像为JPEG格式
-	buf, err := gocv.IMEncode(".jpg", resImg)
+	// 编码图像为JPEG格式，使用较低的质量提高性能
+	buf, err := gocv.IMEncodeWithParams(".jpg", resImg, []int{gocv.IMWriteJpegQuality, 80})
 
 	res := ResultFrame{
 		Buf: buf,
@@ -467,6 +662,11 @@ func (d *Demo) ProcessFrame(img gocv.Mat, retChan chan<- ResultFrame,
 	if closeImg {
 		// 关闭复制的网络摄像头帧
 		img.Close()
+	}
+
+	// 释放检测对象内存
+	if detectObjs != nil {
+		detectObjs.Free()
 	}
 
 	retChan <- res
@@ -595,14 +795,15 @@ func (d *Demo) DetectObjects(img gocv.Mat, frameNum int,
 
 	timing.DetObjStart = time.Now()
 
-	// 转换颜色空间并调整图像大小
+	// 转换颜色空间并调整图像大小（直接在原图上操作以减少内存使用）
 	rgbImg := gocv.NewMat()
 	defer rgbImg.Close()
 	gocv.CvtColor(img, &rgbImg, gocv.ColorBGRToRGB)
 
-	cropImg := rgbImg.Clone()
+	cropImg := gocv.NewMat()
 	defer cropImg.Close()
 
+	// 使用LetterBoxResize调整图像大小以适应模型输入
 	d.resizer.LetterBoxResize(rgbImg, &cropImg, render.Black)
 
 	// 对图像文件执行推理
@@ -616,6 +817,7 @@ func (d *Demo) DetectObjects(img gocv.Mat, frameNum int,
 
 	timing.DetObjInferenceEnd = time.Now()
 
+	// 执行对象检测
 	detectObjs := d.process.DetectObjects(outputs, d.resizer)
 
 	// 在完成后处理后释放在C内存中分配的输出
@@ -641,6 +843,8 @@ func main() {
 	limitLabels := flag.String("x", "", "Comma delimited list of labels (COCO) to restrict object tracking to")
 	renderFormat := flag.String("r", "outline", "The rendering format used for instance segmentation [outline|mask]")
 	useTracking := flag.Bool("track", false, "Enable ByteTrack object tracking (default: false, only detection)")
+	// 添加缓冲区大小参数，默认为FPS*2（约2秒的视频）
+	bufferSize := flag.Int("buffer", FPS*2, "Frame buffer size to reduce stuttering (default: 2 seconds of video)")
 
 	flag.Parse()
 
@@ -678,6 +882,12 @@ func main() {
 	} else {
 		log.Println("ByteTrack object tracking disabled, using detection only")
 	}
+
+	// 设置帧缓冲区大小
+	demo.bufferSize = *bufferSize
+	// 初始化帧缓冲区
+	demo.frameBuffer = make(chan gocv.Mat, demo.bufferSize)
+	log.Printf("Frame buffer size: %d frames (%.1f seconds)", demo.bufferSize, float64(demo.bufferSize)/float64(FPS))
 
 	if err != nil {
 		log.Fatalf("Error creating demo: %v", err)

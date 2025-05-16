@@ -476,9 +476,14 @@ func (d *Demo) ProcessFrame(img gocv.Mat, retChan chan<- ResultFrame,
 func (d *Demo) DetectionsToTracks(detectResults []postprocess.DetectResult) []*tracker.STrack {
 	var tracks []*tracker.STrack
 
-	for i, det := range detectResults {
+	for _, det := range detectResults {
 		// 创建一个新的跟踪对象，使用检测索引作为ID
-		track := tracker.NewSTrack(det.Box, det.Score, det.ClassID, i)
+		// 将 postprocess.BoxRect 转换为 tracker.Rect
+		rect := tracker.NewRect(float32(det.Box.Left), float32(det.Box.Top),
+			float32(det.Box.Right-det.Box.Left), float32(det.Box.Bottom-det.Box.Top))
+
+		// 使用正确的字段名：Probability 而不是 Score，Class 而不是 ClassID
+		track := tracker.NewSTrack(rect, det.Probability, int64(det.Class), det.Class)
 		tracks = append(tracks, track)
 	}
 

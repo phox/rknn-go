@@ -247,6 +247,13 @@ Update system shared library cache (LD library).
 ```
 sudo ldconfig
 ```
+Build
+```
+export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+export CGO_CFLAGS=$(pkg-config --cflags opencv4)
+export CGO_LDFLAGS=$(pkg-config --libs opencv4)
+go build ...
+```
 
 Clean up and remove files.
 ```

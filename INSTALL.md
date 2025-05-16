@@ -3,7 +3,7 @@
 
 ## Dependencies
 
-go-rknnlite has a number of dependencies that are required.
+rknn-go has a number of dependencies that are required.
 
 The [rknn-toolkit2](https://github.com/airockchip/rknn-toolkit2) must be installed on
 your system with C header files and libraries available in the system path, 
@@ -30,11 +30,11 @@ you in that process but some variation maybe needed.
 
 ## Docker Install
 
-A prebuilt [docker image](https://hub.docker.com/repository/docker/swdee/go-rknnlite/general) 
-is available as `swdee/go-rknnlite:latest` which contains a Debian bookworm OS base with
+A prebuilt [docker image](https://hub.docker.com/repository/docker/phox/rknn-go/general) 
+is available as `phox/rknn-go:latest` which contains a Debian bookworm OS base with
 Golang, OpenCV, and GoCV configured.
 
-You can use this image to run your own application or the go-rknnlite examples.  For example
+You can use this image to run your own application or the rknn-go examples.  For example
 to run the [MobileNet Demo](example/mobilenet) use the following commands.
 
 ```
@@ -47,7 +47,7 @@ docker run --rm \
   -v "/usr/include/rknn_api.h:/usr/include/rknn_api.h" \
   -v "/usr/lib/librknnrt.so:/usr/lib/librknnrt.so" \
   -w /go/src/app \
-  swdee/go-rknnlite:latest \
+  phox/rknn-go:latest \
   go run ./example/mobilenet/mobilenet.go  
 ```
 
@@ -61,13 +61,13 @@ An explanation of each parameter in the docker command is as follows;
 | -v "/usr/include/rknn_api.h:/usr/include/rknn_api.h" | Include the rknn-toolkit2 header files                          |
 | -v "/usr/lib/librknnrt.so:/usr/lib/librknnrt.so"     | Include the rknn-toolkit2 shared library                        |
 | -w /go/src/app                                       | Set the working directory in docker container                   |
-| swdee/go-rknnlite:latest                             | Use the prebuilt go-rknnlite docker image                       |
+| phox/rknn-go:latest                             | Use the prebuilt rknn-go docker image                       |
 | go run ./example/mobilenet/mobilenet.go              | Run the mobilenet.go demo                                       |
 
 
 To view the OpenCV configuration in this prebuilt docker image run.
 ```
-docker run --rm swdee/go-rknnlite:latest opencv_version --verbose
+docker run --rm phox/rknn-go:latest opencv_version --verbose
 ```
 
 
@@ -96,12 +96,12 @@ versions must be compatible.
 Run the following command to build your custom docker image.  It takes
 approximately 25 minutes to build on RK3588 based SBC.
 ```
-docker build --progress=plain -t my-go-rknnlite .
+docker build --progress=plain -t my-rknn-go .
 ```
 
 Once successfully built run the image to confirm compiled program versions.
 ```
-docker run --rm my-go-rknnlite
+docker run --rm my-rknn-go
 ```
 
 Output from the docker container.
@@ -312,7 +312,7 @@ rm -rf testgocv/
 
 ## Maintainer Notes Only
 
-The following notes are for the go-rknnlite maintainer only, you do not need to do these.
+The following notes are for the rknn-go maintainer only, you do not need to do these.
 
 
 ### Building Docker Image
@@ -320,12 +320,12 @@ The following notes are for the go-rknnlite maintainer only, you do not need to 
 
 Building the docker image.
 ```
-docker build --progress=plain -t swdee/go-rknnlite:latest .
+docker build --progress=plain -t phox/rknn-go:latest .
 ```
 
 Check version after build is complete.
 ```
-docker run --rm go-rknnlite:latest
+docker run --rm rknn-go:latest
 ```
 
 
@@ -338,16 +338,16 @@ docker login
 
 Push the tagged image as latest.
 ```
-docker push swdee/go-rknnlite:latest
+docker push phox/rknn-go:latest
 ```
 
 Create a version number for this latest image.
 ```
-docker tag swdee/go-rknnlite:latest swdee/go-rknnlite:1.0.0
+docker tag phox/rknn-go:latest phox/rknn-go:1.0.0
 ```
 
 Push the versioned image.
 ```
-docker push swdee/go-rknnlite:1.0.0
+docker push phox/rknn-go:1.0.0
 ```
 

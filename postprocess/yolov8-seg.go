@@ -1,9 +1,9 @@
 package postprocess
 
 import (
-	"github.com/swdee/go-rknnlite"
-	"github.com/swdee/go-rknnlite/preprocess"
-	"github.com/swdee/go-rknnlite/tracker"
+	rknnlite "github.com/phox/rknn-go"
+	"github.com/phox/rknn-go/preprocess"
+	"github.com/phox/rknn-go/tracker"
 )
 
 const (

@@ -1,10 +1,9 @@
 
-# go-rknnlite
+# rknn-go
 
 
-![go-rknnlite-logo.jpg](go-rknnlite-logo.jpg)
 
-go-rknnlite provides Go language bindings for the [RKNN Toolkit2](https://github.com/airockchip/rknn-toolkit2/tree/master)
+rknn-go provides Go language bindings for the [RKNN Toolkit2](https://github.com/airockchip/rknn-toolkit2/tree/master)
 C API interface.  It aims to provide lite bindings in the spirit of the closed source
 Python lite bindings used for running AI Inference models on the Rockchip NPU 
 via the RKNN software stack.
@@ -20,14 +19,14 @@ the RK35xx series supported by the RKNN Toolkit2.
 
 To use in your Go project, get the library.
 ```
-go get github.com/swdee/go-rknnlite
+go get github.com/phox/rknn-go
 ```
 
 Or to try the examples clone the git code and data repositories.  
 ```
-git clone https://github.com/swdee/go-rknnlite.git
-cd go-rknnlite/example
-git clone https://github.com/swdee/go-rknnlite-data.git data
+git clone https://github.com/phox/rknn-go.git
+cd rknn-go/example
+git clone https://github.com/phox/rknn-go-data.git data
 ```
 
 Then refer to the Readme files for each example to run on command line.

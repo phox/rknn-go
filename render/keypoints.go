@@ -1,9 +1,10 @@
 package render
 
 import (
-	"github.com/swdee/go-rknnlite/postprocess"
-	"gocv.io/x/gocv"
 	"image"
+
+	"github.com/phox/rknn-go/postprocess"
+	"gocv.io/x/gocv"
 )
 
 /* skeleton keypoints

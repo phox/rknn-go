@@ -1,5 +1,5 @@
 /*
-go-rknnlite provides Go language bindings for the RKNN Toolkit2
+rknn-go provides Go language bindings for the RKNN Toolkit2
 C API interface.  It aims to provide lite bindings in the spirit of the closed source
 Python lite bindings used for running AI Inference models on the Rockchip NPU
 via the RKNN software stack.

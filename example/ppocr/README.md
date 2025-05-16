@@ -19,7 +19,7 @@ You only need to do this once for all examples.
 
 ```
 cd example/
-git clone https://github.com/swdee/go-rknnlite-data.git data
+git clone https://github.com/phox/rknn-go-data.git data
 ```
 
 
@@ -84,7 +84,7 @@ docker run --rm \
   -v "/usr/include/rknn_api.h:/usr/include/rknn_api.h" \
   -v "/usr/lib/librknnrt.so:/usr/lib/librknnrt.so" \
   -w /go/src/app \
-  swdee/go-rknnlite:latest \
+  phox/rknn-go:latest \
   go run ./example/ppocr/detect/detect.go
 ```
 
@@ -146,7 +146,7 @@ docker run --rm \
   -v "/usr/include/rknn_api.h:/usr/include/rknn_api.h" \
   -v "/usr/lib/librknnrt.so:/usr/lib/librknnrt.so" \
   -w /go/src/app \
-  swdee/go-rknnlite:latest \
+  phox/rknn-go:latest \
   go run ./example/ppocr/recognise/recognise.go
 ```
 
@@ -337,7 +337,7 @@ docker run --rm \
   -v "/usr/include/rknn_api.h:/usr/include/rknn_api.h" \
   -v "/usr/lib/librknnrt.so:/usr/lib/librknnrt.so" \
   -w /go/src/app \
-  swdee/go-rknnlite:latest \
+  phox/rknn-go:latest \
   go run ./example/ppocr/system/system.go
 ```
 

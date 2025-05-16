@@ -1,10 +1,11 @@
 package postprocess
 
 import (
-	"github.com/swdee/go-rknnlite"
-	"github.com/swdee/go-rknnlite/preprocess"
 	"math"
 	"sort"
+
+	rknnlite "github.com/phox/rknn-go"
+	"github.com/phox/rknn-go/preprocess"
 )
 
 // YOLOv8obb defines the struct for YOLOv8-obb model inference post processing

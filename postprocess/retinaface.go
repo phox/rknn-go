@@ -1,9 +1,10 @@
 package postprocess
 
 import (
-	"github.com/swdee/go-rknnlite"
-	"github.com/swdee/go-rknnlite/preprocess"
 	"math"
+
+	rknnlite "github.com/phox/rknn-go"
+	"github.com/phox/rknn-go/preprocess"
 )
 
 // RetinaFace defines the struct for the RetinaFace model inference post processing

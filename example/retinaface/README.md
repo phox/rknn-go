@@ -13,7 +13,7 @@ You only need to do this once for all examples.
 
 ```
 cd example/
-git clone https://github.com/swdee/go-rknnlite-data.git data
+git clone https://github.com/phox/rknn-go-data.git data
 ```
 
 Run the RetinaFace example.
@@ -81,7 +81,7 @@ docker run --rm \
   -v "/usr/include/rknn_api.h:/usr/include/rknn_api.h" \
   -v "/usr/lib/librknnrt.so:/usr/lib/librknnrt.so" \
   -w /go/src/app \
-  swdee/go-rknnlite:latest \
+  phox/rknn-go:latest \
   go run ./example/retinaface/retinaface.go
 ```
 

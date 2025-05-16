@@ -1,6 +1,6 @@
 package postprocess
 
-import "github.com/swdee/go-rknnlite/tracker"
+import "github.com/phox/rknn-go/tracker"
 
 // DetectionsToObjects takes a postprocess object detection results and
 // converts it into a tracker object

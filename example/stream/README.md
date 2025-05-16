@@ -43,7 +43,7 @@ You only need to do this once for all examples.
 
 ```
 cd example/
-git clone https://github.com/swdee/go-rknnlite-data.git data
+git clone https://github.com/phox/rknn-go-data.git data
 ```
 
 Start the Stream server on port `8080` and run the example using a pool 
@@ -85,7 +85,7 @@ docker run --rm -it \
   -v "/usr/lib/librknnrt.so:/usr/lib/librknnrt.so" \
   -w /go/src/app \
   -p 8080:8080 \
-  swdee/go-rknnlite:latest \
+  phox/rknn-go:latest \
   go run ./example/stream/bytetrack.go -a :8080 -s 3 -x person
 ```
 

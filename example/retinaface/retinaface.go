@@ -6,10 +6,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/swdee/go-rknnlite"
-	"github.com/swdee/go-rknnlite/postprocess"
-	"github.com/swdee/go-rknnlite/preprocess"
-	"github.com/swdee/go-rknnlite/render"
+	"github.com/phox/rknn-go"
+	"github.com/phox/rknn-goprocess"
+	"github.com/phox/rknn-go/"
+	"github.com/phox/rknn-go/
 	"gocv.io/x/gocv"
 	"log"
 	"os"

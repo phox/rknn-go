@@ -3,12 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/swdee/go-rknnlite"
-	"github.com/swdee/go-rknnlite/postprocess"
-	"github.com/swdee/go-rknnlite/preprocess"
-	"github.com/swdee/go-rknnlite/render"
-	"github.com/swdee/go-rknnlite/tracker"
-	"gocv.io/x/gocv"
 	"image"
 	"image/color"
 	"log"
@@ -17,6 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	rknnlite "github.com/phox/rknn-go"
+	"github.com/phox/rknn-go/postprocess"
+	"github.com/phox/rknn-go/preprocess"
+	"github.com/phox/rknn-go/render"
+	"github.com/phox/rknn-go/tracker"
+	"gocv.io/x/gocv"
 )
 
 var (

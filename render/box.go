@@ -2,12 +2,13 @@ package render
 
 import (
 	"fmt"
-	"github.com/swdee/go-rknnlite/postprocess"
-	"github.com/swdee/go-rknnlite/tracker"
-	"gocv.io/x/gocv"
 	"image"
 	"image/color"
 	"math"
+
+	"github.com/phox/rknn-go/postprocess"
+	"github.com/phox/rknn-go/tracker"
+	"gocv.io/x/gocv"
 )
 
 // DetectionBoxes renders the bounding boxes around the object detected

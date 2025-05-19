@@ -72,12 +72,19 @@ def convert_model(args):
     if args.quantization == 'int8':
         config_params['quantized_algorithm'] = 'normal'
         
+    # Add dynamic_input parameter to handle dynamic input shapes
+    config_params['dynamic_input'] = True
+        
     rknn.config(**config_params)
     print('done')
     
     # Load model
     print('--> Loading model')
-    ret = rknn.load_onnx(model=args.model) if args.model.lower().endswith('.onnx') else rknn.load_pytorch(model=args.model)
+    if args.model.lower().endswith('.onnx'):
+        # For ONNX models, specify input_size_list to fix input shape issues
+        ret = rknn.load_onnx(model=args.model, input_size_list=[input_size])
+    else:
+        ret = rknn.load_pytorch(model=args.model)
     if ret != 0:
         logger.error(f"Failed to load model: {args.model}")
         return ret

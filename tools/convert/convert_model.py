@@ -62,10 +62,17 @@ def convert_model(args):
     
     # Pre-process config
     print('--> Config model')
-    rknn.config(mean_values=mean_values,
-                std_values=std_values,
-                target_platform=args.target,
-                quantized_algorithm='normal' if args.quantization == 'int8' else 'float')
+    config_params = {
+        'mean_values': mean_values,
+        'std_values': std_values,
+        'target_platform': args.target
+    }
+    
+    # Only set quantized_algorithm for int8 quantization
+    if args.quantization == 'int8':
+        config_params['quantized_algorithm'] = 'normal'
+        
+    rknn.config(**config_params)
     print('done')
     
     # Load model

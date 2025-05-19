@@ -3,12 +3,15 @@ package convert
 // Package convert provides utilities for converting YOLO models to RKNN format
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -62,6 +65,30 @@ func DefaultConversionOptions() ConversionOptions {
 	}
 }
 
+// isDefaultMeanStd checks if the provided mean and std values are the default ones
+func isDefaultMeanStd(mean, std []float32) bool {
+	defaultMean := []float32{0.0, 0.0, 0.0}
+	defaultStd := []float32{1.0, 1.0, 1.0}
+
+	if len(mean) != len(defaultMean) || len(std) != len(defaultStd) {
+		return false
+	}
+
+	for i := 0; i < len(mean); i++ {
+		if mean[i] != defaultMean[i] {
+			return false
+		}
+	}
+
+	for i := 0; i < len(std); i++ {
+		if std[i] != defaultStd[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // ValidateOptions checks if the conversion options are valid
 func ValidateOptions(opts *ConversionOptions) error {
 	// Check if input model exists
@@ -106,7 +133,7 @@ func ValidateOptions(opts *ConversionOptions) error {
 	return nil
 }
 
-// ConvertModel converts a YOLO model to RKNN format
+// ConvertModel converts a YOLO model to RKNN format using the RKNN SDK
 func ConvertModel(opts ConversionOptions) error {
 	// Validate options
 	if err := ValidateOptions(&opts); err != nil {
@@ -121,59 +148,113 @@ func ConvertModel(opts ConversionOptions) error {
 		log.Printf("Input size: %s\n", opts.InputSize)
 	}
 
-	// This is a placeholder for the actual conversion logic
-	// In a real implementation, this would use the RKNN SDK to convert the model
-	// For now, we'll just simulate the conversion process
-
 	// Parse input size
 	parts := strings.Split(opts.InputSize, "x")
 	width := parts[0]
 	height := parts[1]
 
-	// Build conversion command based on model type and options
-	var cmd string
+	// Check for unsupported model type
 	switch opts.ModelType {
-	case YOLOv5, YOLOv8, YOLOv10, YOLOv11, YOLOX:
-		cmd = fmt.Sprintf("rknn-toolkit2 --convert --model %s --output %s --target %s "+
-			"--quantization %s --input-size %sx%s",
-			opts.InputModel, opts.OutputModel, opts.TargetPlatform,
-			opts.Quantization, width, height)
-	case YOLOv5Seg, YOLOv8Seg:
-		cmd = fmt.Sprintf("rknn-toolkit2 --convert --model %s --output %s --target %s "+
-			"--quantization %s --input-size %sx%s --segmentation",
-			opts.InputModel, opts.OutputModel, opts.TargetPlatform,
-			opts.Quantization, width, height)
-	case YOLOv8Pose:
-		cmd = fmt.Sprintf("rknn-toolkit2 --convert --model %s --output %s --target %s "+
-			"--quantization %s --input-size %sx%s --pose-estimation",
-			opts.InputModel, opts.OutputModel, opts.TargetPlatform,
-			opts.Quantization, width, height)
-	case YOLOv8OBB:
-		cmd = fmt.Sprintf("rknn-toolkit2 --convert --model %s --output %s --target %s "+
-			"--quantization %s --input-size %sx%s --oriented-bbox",
-			opts.InputModel, opts.OutputModel, opts.TargetPlatform,
-			opts.Quantization, width, height)
+	case YOLOv5, YOLOv8, YOLOv10, YOLOv11, YOLOX, YOLOv5Seg, YOLOv8Seg, YOLOv8Pose, YOLOv8OBB:
+		// Supported model types
 	default:
 		return fmt.Errorf("unsupported model type: %s", opts.ModelType)
 	}
 
+	// Prepare arguments for the Python script
+	// Get the directory of the current Go file for more reliable script location
+	_, currentFilePath, _, _ := runtime.Caller(0)
+	scriptPath := filepath.Join(filepath.Dir(currentFilePath), "convert_model.py")
+
+	// Build Python script arguments
+	pyArgs := []string{
+		scriptPath,
+		"--model", opts.InputModel,
+		"--output", opts.OutputModel,
+		"--target", opts.TargetPlatform,
+		"--quantization", opts.Quantization,
+		"--input-size", fmt.Sprintf("%sx%s", width, height),
+	}
+
+	// Add model-specific arguments
+	switch opts.ModelType {
+	case YOLOv5Seg, YOLOv8Seg:
+		pyArgs = append(pyArgs, "--segmentation")
+	case YOLOv8Pose:
+		pyArgs = append(pyArgs, "--pose-estimation")
+	case YOLOv8OBB:
+		pyArgs = append(pyArgs, "--oriented-bbox")
+	}
+
+	// Add mean and std values if they're not the default
+	if !isDefaultMeanStd(opts.MeanValues, opts.StdValues) {
+		meanStr := fmt.Sprintf("%f,%f,%f", opts.MeanValues[0], opts.MeanValues[1], opts.MeanValues[2])
+		stdStr := fmt.Sprintf("%f,%f,%f", opts.StdValues[0], opts.StdValues[1], opts.StdValues[2])
+		pyArgs = append(pyArgs, "--mean", meanStr, "--std", stdStr)
+	}
+
 	if opts.Verbose {
-		log.Printf("Conversion command: %s\n", cmd)
-		log.Println("Note: This is a simulation. In a real implementation, the RKNN SDK would be used.")
+		pyArgs = append(pyArgs, "--verbose")
+		log.Printf("Running RKNN conversion with Python script: python %s\n", strings.Join(pyArgs, " "))
 	}
 
-	// Simulate conversion process
-	log.Println("Model conversion started...")
-	log.Println("Preprocessing model...")
-	log.Println("Converting to RKNN format...")
-	log.Println("Optimizing for target platform...")
-	if opts.Quantization == "int8" {
-		log.Println("Applying int8 quantization...")
+	// Execute the Python script
+	cmd := exec.Command("python", pyArgs...)
+
+	// Create pipes for stdout and stderr
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %v", err)
 	}
-	log.Println("Finalizing model...")
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %v", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start conversion command: %v", err)
+	}
+
+	// Create a channel to signal when processing is complete
+	done := make(chan bool)
+
+	// Process stdout in a goroutine
+	go func() {
+		scanner := bufio.NewScanner(stdoutPipe)
+		for scanner.Scan() {
+			line := scanner.Text()
+			log.Println(line)
+		}
+		done <- true
+	}()
+
+	// Process stderr in a goroutine
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			line := scanner.Text()
+			log.Println("ERROR:", line)
+		}
+		done <- true
+	}()
+
+	// Wait for both stdout and stderr processing to complete
+	<-done
+	<-done
+
+	// Wait for the command to complete
+	err = cmd.Wait()
+	if err != nil {
+		return fmt.Errorf("model conversion failed: %v", err)
+	}
+
+	// Verify the output file was created
+	if _, err := os.Stat(opts.OutputModel); os.IsNotExist(err) {
+		return fmt.Errorf("conversion completed but output file was not created: %s", opts.OutputModel)
+	}
+
 	log.Printf("Model successfully converted and saved to: %s\n", opts.OutputModel)
-
-	// In a real implementation, we would return any errors from the conversion process
 	return nil
 }
 

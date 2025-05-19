@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	rknnlite "github.com/phox/rknn-go"
@@ -100,6 +101,16 @@ type Demo struct {
 	frameBuffer chan gocv.Mat
 	// bufferSize 缓冲区大小（帧数）
 	bufferSize int
+	// rtspRunning 标记RTSP流是否正在运行
+	rtspRunning bool
+	// rtspMutex 用于保护rtspRunning和clientCount的互斥锁
+	rtspMutex sync.Mutex
+	// clientCount 当前连接的客户端数量
+	clientCount int
+	// rtspExitCh 用于关闭RTSP流的通道
+	rtspExitCh chan struct{}
+	// 用于保护frameBuffer的互斥锁
+	frameBufferMutex sync.Mutex
 }
 
 // NewDemo returns and instance of Demo, a streaming HTTP server showing
@@ -110,8 +121,11 @@ func NewDemo(rtspSrc *RTSPSource, modelFile, labelFile string, poolSize int,
 	var err error
 
 	d := &Demo{
-		rtspSrc:   rtspSrc,
-		limitObjs: make([]string, 0),
+		rtspSrc:     rtspSrc,
+		limitObjs:   make([]string, 0),
+		clientCount: 0,
+		rtspRunning: false,
+		bufferSize:  90, // 默认3秒缓冲（30fps）
 	}
 
 	// create new pool
@@ -232,7 +246,44 @@ func containsStr(slice []string, item string) bool {
 
 // Stream is the HTTP handler function used to stream video frames to browser
 func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
-	log.Printf("New client connection established\n")
+	log.Printf("新客户端连接已建立")
+
+	// 增加客户端计数并检查RTSP流状态
+	d.rtspMutex.Lock()
+	d.clientCount++
+	clientID := d.clientCount
+	rtspRunning := d.rtspRunning
+	log.Printf("当前客户端数量: %d", d.clientCount)
+
+	// 如果RTSP流未运行，则启动它
+	if !rtspRunning {
+		// 初始化帧缓冲区（如果尚未初始化）
+		if d.frameBuffer == nil {
+			d.frameBufferMutex.Lock()
+			if d.frameBuffer == nil { // 双重检查
+				// 设置默认缓冲区大小（如果未设置）
+				if d.bufferSize <= 0 {
+					d.bufferSize = 90 // 默认3秒缓冲（30fps）
+				}
+				d.frameBuffer = make(chan gocv.Mat, d.bufferSize)
+				log.Printf("已创建帧缓冲区，大小: %d 帧", d.bufferSize)
+			}
+			d.frameBufferMutex.Unlock()
+		}
+
+		// 创建退出通道
+		if d.rtspExitCh == nil {
+			d.rtspExitCh = make(chan struct{})
+		}
+
+		// 标记RTSP流为运行状态
+		d.rtspRunning = true
+		log.Printf("启动RTSP流")
+
+		// 启动RTSP流读取
+		go d.startRTSPStream(d.frameBuffer, d.rtspExitCh)
+	}
+	d.rtspMutex.Unlock()
 
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 
@@ -253,12 +304,6 @@ func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
 
 	// 创建通道以接收处理后的帧
 	recvFrame := make(chan ResultFrame, 30)
-
-	// 创建通道以接收来自RTSP的帧
-	closeRTSP := make(chan struct{})
-
-	// 启动RTSP流读取
-	go d.startRTSPStream(d.frameBuffer, closeRTSP)
 
 	// 用于控制输出帧率的计时器
 	outputTicker := time.NewTicker(time.Second / time.Duration(FPS))
@@ -284,7 +329,8 @@ func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
 	// 自适应输出间隔，根据处理延迟动态调整
 	adaptiveInterval := time.Second / time.Duration(FPS)
 
-	log.Printf("开始视频流处理，缓冲区大小: %d 帧 (%.1f 秒)\n", d.bufferSize, float64(d.bufferSize)/float64(FPS))
+	log.Printf("客户端 #%d: 开始视频流处理，缓冲区大小: %d 帧 (%.1f 秒)",
+		clientID, d.bufferSize, float64(d.bufferSize)/float64(FPS))
 
 	// 预热缓冲区，等待一定数量的帧被缓存后再开始处理
 	preWarmSize := d.bufferSize / 2
@@ -292,27 +338,29 @@ func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
 		preWarmSize = 1
 	}
 
-	log.Printf("预热缓冲区，等待 %d 帧被缓存...", preWarmSize)
+	log.Printf("客户端 #%d: 预热缓冲区，等待 %d 帧被缓存...", clientID, preWarmSize)
 	for len(d.frameBuffer) < preWarmSize {
 		time.Sleep(100 * time.Millisecond)
 		// 检查客户端是否已断开连接
 		select {
 		case <-r.Context().Done():
-			log.Printf("客户端在预热阶段断开连接\n")
-			closeRTSP <- struct{}{}
+			log.Printf("客户端 #%d: 在预热阶段断开连接", clientID)
+			// 减少客户端计数
+			d.handleClientDisconnect(clientID)
 			return
 		default:
 			// 继续等待
 		}
 	}
-	log.Printf("缓冲区预热完成，开始处理视频流")
+	log.Printf("客户端 #%d: 缓冲区预热完成，开始处理视频流", clientID)
 
 loop:
 	for {
 		select {
 		case <-r.Context().Done():
-			log.Printf("Client disconnected\n")
-			closeRTSP <- struct{}{}
+			log.Printf("客户端 #%d: 断开连接", clientID)
+			// 减少客户端计数并可能关闭RTSP流
+			d.handleClientDisconnect(clientID)
 			break loop
 
 		// 定期检查缓冲区状态
@@ -344,8 +392,8 @@ loop:
 
 		// 定期打印缓冲区状态
 		case <-statsTicker.C:
-			log.Printf("缓冲区状态: %d/%d 帧 (%s), 处理延迟: %.2f ms, 输出帧率: %.2f fps\n",
-				len(d.frameBuffer), d.bufferSize,
+			log.Printf("客户端 #%d: 缓冲区状态: %d/%d 帧 (%s), 处理延迟: %.2f ms, 输出帧率: %.2f fps",
+				clientID, len(d.frameBuffer), d.bufferSize,
 				bufferStatus,
 				float64(processDelay)/float64(time.Millisecond),
 				fps)
@@ -383,7 +431,7 @@ loop:
 			processingFrame = false
 
 			if buf.Err != nil {
-				log.Printf("Error occured during ProcessFrame: %v", buf.Err)
+				log.Printf("客户端 #%d: 处理帧时发生错误: %v", clientID, buf.Err)
 			} else {
 				// 将图像写入响应
 				w.Write([]byte("--frame\r\n"))
@@ -409,6 +457,30 @@ loop:
 				frameCount = 0
 				startTime = time.Now()
 			}
+		}
+	}
+}
+
+// handleClientDisconnect 处理客户端断开连接
+func (d *Demo) handleClientDisconnect(clientID int) {
+	// 加锁以保护共享资源
+	d.rtspMutex.Lock()
+	defer d.rtspMutex.Unlock()
+
+	// 减少客户端计数
+	d.clientCount--
+	log.Printf("客户端 #%d 已断开连接，当前剩余客户端数量: %d", clientID, d.clientCount)
+
+	// 如果没有更多客户端，关闭RTSP流
+	if d.clientCount <= 0 {
+		if d.rtspRunning && d.rtspExitCh != nil {
+			log.Printf("最后一个客户端已断开连接，关闭RTSP流")
+			// 发送信号关闭RTSP流
+			d.rtspExitCh <- struct{}{}
+			// 重置状态
+			d.rtspRunning = false
+			// 重置客户端计数（以防万一）
+			d.clientCount = 0
 		}
 	}
 }
@@ -482,6 +554,23 @@ loop:
 		select {
 		case <-exitCh:
 			log.Printf("关闭RTSP流")
+			// 清理帧缓冲区中的所有Mat对象，防止内存泄漏
+			d.frameBufferMutex.Lock()
+			if d.frameBuffer != nil {
+				// 清空缓冲区中的所有帧
+				log.Printf("清理帧缓冲区中的 %d 个帧", len(d.frameBuffer))
+				for len(d.frameBuffer) > 0 {
+					select {
+					case frame := <-d.frameBuffer:
+						// 关闭Mat对象释放内存
+						frame.Close()
+					default:
+						// 缓冲区已空
+						break
+					}
+				}
+			}
+			d.frameBufferMutex.Unlock()
 			break loop
 
 		case <-statsTicker.C:
@@ -841,8 +930,8 @@ func main() {
 	limitLabels := flag.String("x", "", "Comma delimited list of labels (COCO) to restrict object tracking to")
 	renderFormat := flag.String("r", "outline", "The rendering format used for instance segmentation [outline|mask]")
 	useTracking := flag.Bool("track", false, "Enable ByteTrack object tracking (default: false, only detection)")
-	// 添加缓冲区大小参数，默认为FPS*2（约2秒的视频）
-	bufferSize := flag.Int("buffer", FPS*2, "Frame buffer size to reduce stuttering (default: 2 seconds of video)")
+	// 添加缓冲区大小参数，默认为FPS*3（约3秒的视频）
+	bufferSize := flag.Int("buffer", FPS*3, "Frame buffer size to reduce stuttering (default: 3 seconds of video)")
 
 	flag.Parse()
 
@@ -881,10 +970,13 @@ func main() {
 		log.Println("ByteTrack object tracking disabled, using detection only")
 	}
 
-	// 设置帧缓冲区大小
+	// 设置帧缓冲区大小（帧缓冲区将在第一个客户端连接时创建）
 	demo.bufferSize = *bufferSize
-	// 初始化帧缓冲区
-	demo.frameBuffer = make(chan gocv.Mat, demo.bufferSize)
+	// 初始化RTSP流退出通道
+	demo.rtspExitCh = make(chan struct{})
+	// 初始化客户端计数和RTSP流状态
+	demo.clientCount = 0
+	demo.rtspRunning = false
 	log.Printf("Frame buffer size: %d frames (%.1f seconds)", demo.bufferSize, float64(demo.bufferSize)/float64(FPS))
 
 	if err != nil {

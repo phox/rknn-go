@@ -73,7 +73,8 @@ def convert_model(args):
         config_params['quantized_algorithm'] = 'normal'
         
     # Add dynamic_input parameter to handle dynamic input shapes
-    config_params['dynamic_input'] = True
+    # dynamic_input needs to be a list of lists for RKNN Toolkit 2.3.2+
+    config_params['dynamic_input'] = [[input_size]]
         
     rknn.config(**config_params)
     print('done')

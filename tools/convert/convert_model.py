@@ -45,7 +45,7 @@ def convert_model(args):
     
     # Parse input size
     width, height = args.input_size.split('x')
-    input_size = [int(height), int(width), 3]  # RKNN expects [height, width, channels]
+    input_size = [1, 3, int(height), int(width)]  # RKNN expects [batch, channels, height, width]
     
     # Parse mean and std values
     mean_values = [float(x) for x in args.mean.split(',')]
@@ -74,7 +74,8 @@ def convert_model(args):
         
     # Add dynamic_input parameter to handle dynamic input shapes
     # dynamic_input needs to be a list of lists for RKNN Toolkit 2.3.2+
-    config_params['dynamic_input'] = [[input_size]]
+    # Format should be [[batch, channels, height, width]]
+    config_params['dynamic_input'] = [input_size]
         
     rknn.config(**config_params)
     print('done')

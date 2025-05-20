@@ -75,9 +75,9 @@ def convert_model(args):
         
     # Add dynamic_input parameter to handle dynamic input shapes
     # dynamic_input needs to be a list of lists for RKNN Toolkit 2.3.2+
-    # Format should be [[[min_batch, min_channels, min_height, min_width], [max_batch, max_channels, max_height, max_width]]]
-    # For fixed dimensions, min and max are the same
-    config_params['dynamic_input'] = [[input_size, input_size]]
+    # Format should be [input_size] where input_size is [batch, channels, height, width]
+    # The error message indicates that dynamic_input[0] should be a single element, not a pair
+    config_params['dynamic_input'] = [input_size]
         
     rknn.config(**config_params)
     print('done')
@@ -87,7 +87,7 @@ def convert_model(args):
     if args.model.lower().endswith('.onnx'):
         # For ONNX models, specify input_size_list to fix input shape issues
         # Use the same format as dynamic_input for consistency
-        ret = rknn.load_onnx(model=args.model, input_size_list=[[input_size, input_size]])
+        ret = rknn.load_onnx(model=args.model, input_size_list=[input_size])
     else:
         ret = rknn.load_pytorch(model=args.model)
     if ret != 0:

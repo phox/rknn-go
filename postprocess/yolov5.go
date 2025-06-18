@@ -3,6 +3,7 @@ package postprocess
 import (
 	rknnlite "github.com/phox/rknn-go"
 	"github.com/phox/rknn-go/preprocess"
+	"math"
 )
 
 // YOLOv5 defines the struct for YOLOv5 model inference post processing
@@ -235,6 +236,7 @@ func (y *YOLOv5) DetectObjects(outputs *rknnlite.Outputs,
 	}
 }
 
+
 // processStride processes the given stride
 func (y *YOLOv5) processStride(input []int8, stride YOLOStride,
 	data *strideData, zp int32, scale float32) int {
@@ -250,13 +252,21 @@ func (y *YOLOv5) processStride(input []int8, stride YOLOStride,
 	for a := 0; a < 3; a++ {
 		for i := 0; i < gridH; i++ {
 			for j := 0; j < gridW; j++ {
+				idx := (y.Params.ProbBoxSize*a+4)*gridLen + i*gridW + j
+				if idx >= len(input) {
+					continue // Skip if index is out of bounds
+				}
 
-				boxConfidence := input[(y.Params.ProbBoxSize*a+4)*gridLen+i*gridW+j]
+				boxConfidence := input[idx]
 
 				if boxConfidence >= thresI8 {
-
 					offset := (y.Params.ProbBoxSize*a)*gridLen + i*gridW + j
-					inPtr := offset // Used as a starting index into input
+					inPtr := offset
+
+					// Check bounds for all array accesses
+					if inPtr+3*gridLen >= len(input) {
+						continue
+					}
 
 					boxX := (deqntAffineToF32(input[inPtr], zp, scale))*2.0 - 0.5
 					boxY := (deqntAffineToF32(input[inPtr+gridLen], zp, scale))*2.0 - 0.5
@@ -270,8 +280,19 @@ func (y *YOLOv5) processStride(input []int8, stride YOLOStride,
 					boxX -= boxW / 2.0
 					boxY -= boxH / 2.0
 
+					// Check bounds for class probabilities
+					if inPtr+5*gridLen >= len(input) {
+						continue
+					}
+
 					maxClassProbs := input[inPtr+5*gridLen]
 					maxClassID := 0
+
+					// Check bounds for class loop
+					maxClassIdx := inPtr + (5+y.Params.ObjectClassNum-1)*gridLen
+					if maxClassIdx >= len(input) {
+						continue
+					}
 
 					for k := 1; k < y.Params.ObjectClassNum; k++ {
 						prob := input[inPtr+(5+k)*gridLen]
@@ -289,7 +310,6 @@ func (y *YOLOv5) processStride(input []int8, stride YOLOStride,
 						data.filterBoxes = append(data.filterBoxes, boxX, boxY, boxW, boxH)
 						validCount++
 					}
-
 				}
 			}
 		}

@@ -3,7 +3,6 @@ package postprocess
 import (
 	rknnlite "github.com/phox/rknn-go"
 	"github.com/phox/rknn-go/preprocess"
-	"math"
 )
 
 // YOLOv5 defines the struct for YOLOv5 model inference post processing
@@ -235,7 +234,6 @@ func (y *YOLOv5) DetectObjects(outputs *rknnlite.Outputs,
 		DetectResults: group,
 	}
 }
-
 
 // processStride processes the given stride
 func (y *YOLOv5) processStride(input []int8, stride YOLOStride,

@@ -51,6 +51,8 @@ type ConversionOptions struct {
 	StdValues []float32
 	// Verbose enables detailed logging during conversion
 	Verbose bool
+	// DynamicInput specifies whether to enable dynamic input shape (advanced, only if needed)
+	DynamicInput bool
 }
 
 // DefaultConversionOptions returns the default options for model conversion
@@ -62,6 +64,7 @@ func DefaultConversionOptions() ConversionOptions {
 		MeanValues:     []float32{0.0, 0.0, 0.0},
 		StdValues:      []float32{1.0, 1.0, 1.0},
 		Verbose:        false,
+		DynamicInput:   false,
 	}
 }
 
@@ -195,8 +198,12 @@ func ConvertModel(opts ConversionOptions) error {
 
 	if opts.Verbose {
 		pyArgs = append(pyArgs, "--verbose")
-		log.Printf("Running RKNN conversion with Python script: python %s\n", strings.Join(pyArgs, " "))
 	}
+	if opts.DynamicInput {
+		pyArgs = append(pyArgs, "--dynamic-input")
+	}
+
+	log.Printf("Running RKNN conversion with Python script: python %s\n", strings.Join(pyArgs, " "))
 
 	// Execute the Python script
 	cmd := exec.Command("python", pyArgs...)
@@ -270,6 +277,7 @@ func RunConvertCommand() error {
 	quantization := convertCmd.String("quant", "int8", "Quantization type (int8, float)")
 	inputSize := convertCmd.String("size", "640x640", "Input size in format widthxheight")
 	verbose := convertCmd.Bool("verbose", false, "Enable verbose logging")
+	dynamicInput := convertCmd.Bool("dynamic-input", false, "Enable dynamic input shape (advanced, only if needed)")
 
 	// Parse flags
 	if err := convertCmd.Parse(os.Args[2:]); err != nil {
@@ -292,6 +300,7 @@ func RunConvertCommand() error {
 		MeanValues:     []float32{0.0, 0.0, 0.0},
 		StdValues:      []float32{1.0, 1.0, 1.0},
 		Verbose:        *verbose,
+		DynamicInput:   *dynamicInput,
 	}
 
 	// Run conversion
@@ -311,6 +320,7 @@ func Usage() {
 	fmt.Println("  --quant string    Quantization type (int8, float) (default \"int8\")")
 	fmt.Println("  --size string     Input size in format widthxheight (default \"640x640\")")
 	fmt.Println("  --verbose         Enable verbose logging")
+	fmt.Println("  --dynamic-input   Enable dynamic input shape (advanced, only if needed)")
 	fmt.Println("\nExample:")
 	fmt.Println("  convert --input yolov5s.onnx --output yolov5s-rk3588.rknn --type v5 --target rk3588 --quant int8 --size 640x640")
 }

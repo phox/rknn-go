@@ -937,8 +937,7 @@ func (d *Demo) DetectObjects(img gocv.Mat, frameNum int,
 }
 
 // InitMQTTClient 初始化MQTT客户端
-func (d *Demo) InitMQTTClient(broker, topic string) error {
-	// 设置MQTT客户端选项
+func (d *Demo) InitMQTTClient(broker, topic, user, pass string) error {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(broker)
 	opts.SetClientID(fmt.Sprintf("rtsp-mqtt-%d", time.Now().Unix()))
@@ -946,15 +945,16 @@ func (d *Demo) InitMQTTClient(broker, topic string) error {
 	opts.SetAutoReconnect(true)
 	opts.SetKeepAlive(30 * time.Second)
 	opts.SetPingTimeout(10 * time.Second)
-
-	// 创建MQTT客户端
+	if user != "" {
+		opts.SetUsername(user)
+	}
+	if pass != "" {
+		opts.SetPassword(pass)
+	}
 	d.mqttClient = mqtt.NewClient(opts)
-
-	// 连接到MQTT broker
 	if token := d.mqttClient.Connect(); token.Wait() && token.Error() != nil {
 		return fmt.Errorf("failed to connect to MQTT broker: %v", token.Error())
 	}
-
 	d.mqttBroker = broker
 	d.mqttTopic = topic
 	log.Printf("Connected to MQTT broker: %s, topic: %s", broker, topic)
@@ -979,15 +979,17 @@ func (d *Demo) AlertOut(detectResults []postprocess.DetectResult, trackObjs []*t
 
 	// 准备告警消息
 	alertMsg := struct {
-		Timestamp   string   `json:"timestamp"`
-		ObjectCount int      `json:"object_count"`
-		Objects     []string `json:"objects"`
-		HasMask     bool     `json:"has_mask"`
+		Timestamp     string                     `json:"timestamp"`
+		ObjectCount   int                        `json:"object_count"`
+		DetectResults []postprocess.DetectResult `json:"detect_results"`
+		Objects       []string                   `json:"objects"`
+		HasMask       bool                       `json:"has_mask"`
 	}{
-		Timestamp:   time.Now().Format(time.RFC3339),
-		ObjectCount: objCount,
-		Objects:     make([]string, 0),
-		HasMask:     segMask.Mask != nil,
+		Timestamp:     time.Now().Format(time.RFC3339),
+		ObjectCount:   objCount,
+		DetectResults: detectResults,
+		Objects:       make([]string, 0),
+		HasMask:       segMask.Mask != nil,
 	}
 
 	// 收集检测到的对象类别
@@ -1035,8 +1037,10 @@ func main() {
 	// 添加缓冲区大小参数，默认为FPS*3（约3秒的视频）
 	bufferSize := flag.Int("buffer", FPS*3, "Frame buffer size to reduce stuttering (default: 3 seconds of video)")
 	// 添加MQTT相关参数
-	mqttBroker := flag.String("mqtt", "", "MQTT broker address (e.g., tcp://localhost:1883)")
+	mqttBroker := flag.String("mqtt", "tcp://10.10.9.82:1883", "MQTT broker address (e.g., tcp://localhost:1883)")
 	mqttTopic := flag.String("mqtt-topic", "rtsp/alerts", "MQTT topic for alerts")
+	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
+	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
 	alertThreshold := flag.Int("alert-threshold", 1, "Alert threshold (number of objects to trigger alert)")
 	alertCooldown := flag.Int("alert-cooldown", 30, "Alert cooldown period in seconds")
 
@@ -1092,11 +1096,13 @@ func main() {
 
 	// 如果提供了MQTT broker地址，初始化MQTT客户端
 	if *mqttBroker != "" {
-		if err := demo.InitMQTTClient(*mqttBroker, *mqttTopic); err != nil {
+		if err := demo.InitMQTTClient(*mqttBroker, *mqttTopic, *mqttUser, *mqttPass); err != nil {
 			log.Printf("Warning: Failed to initialize MQTT client: %v", err)
 		} else {
 			log.Printf("MQTT alerts enabled: broker=%s, topic=%s", *mqttBroker, *mqttTopic)
 		}
+	} else {
+		log.Printf("MQTT alerts disabled")
 	}
 
 	if err != nil {

@@ -270,37 +270,7 @@ func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
 	d.rtspMutex.Lock()
 	d.clientCount++
 	clientID := d.clientCount
-	rtspRunning := d.rtspRunning
 	log.Printf("当前客户端数量: %d", d.clientCount)
-
-	// 如果RTSP流未运行，则启动它
-	if !rtspRunning {
-		// 初始化帧缓冲区（如果尚未初始化）
-		if d.frameBuffer == nil {
-			d.frameBufferMutex.Lock()
-			if d.frameBuffer == nil { // 双重检查
-				// 设置默认缓冲区大小（如果未设置）
-				if d.bufferSize <= 0 {
-					d.bufferSize = 90 // 默认3秒缓冲（30fps）
-				}
-				d.frameBuffer = make(chan gocv.Mat, d.bufferSize)
-				log.Printf("已创建帧缓冲区，大小: %d 帧", d.bufferSize)
-			}
-			d.frameBufferMutex.Unlock()
-		}
-
-		// 创建退出通道
-		if d.rtspExitCh == nil {
-			d.rtspExitCh = make(chan struct{})
-		}
-
-		// 标记RTSP流为运行状态
-		d.rtspRunning = true
-		log.Printf("启动RTSP流")
-
-		// 启动RTSP流读取
-		go d.startRTSPStream(d.frameBuffer, d.rtspExitCh)
-	}
 	d.rtspMutex.Unlock()
 
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
@@ -1037,7 +1007,7 @@ func main() {
 	// 添加缓冲区大小参数，默认为FPS*3（约3秒的视频）
 	bufferSize := flag.Int("buffer", FPS*3, "Frame buffer size to reduce stuttering (default: 3 seconds of video)")
 	// 添加MQTT相关参数
-	mqttBroker := flag.String("mqtt", "tcp://10.10.9.82:1883", "MQTT broker address (e.g., tcp://localhost:1883)")
+	mqttBroker := flag.String("mqtt", "", "MQTT broker address (e.g., tcp://localhost:1883)")
 	mqttTopic := flag.String("mqtt-topic", "rtsp/alerts", "MQTT topic for alerts")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username (optional)")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password (optional)")
@@ -1111,6 +1081,35 @@ func main() {
 
 	if *limitLabels != "" {
 		demo.LimitObjects(*limitLabels)
+	}
+
+	// 如果RTSP流未运行，则启动它
+	if !demo.rtspRunning {
+		// 初始化帧缓冲区（如果尚未初始化）
+		if demo.frameBuffer == nil {
+			demo.frameBufferMutex.Lock()
+			if demo.frameBuffer == nil { // 双重检查
+				// 设置默认缓冲区大小（如果未设置）
+				if demo.bufferSize <= 0 {
+					demo.bufferSize = 90 // 默认3秒缓冲（30fps）
+				}
+				demo.frameBuffer = make(chan gocv.Mat, demo.bufferSize)
+				log.Printf("已创建帧缓冲区，大小: %d 帧", demo.bufferSize)
+			}
+			demo.frameBufferMutex.Unlock()
+		}
+
+		// 创建退出通道
+		if demo.rtspExitCh == nil {
+			demo.rtspExitCh = make(chan struct{})
+		}
+
+		// 标记RTSP流为运行状态
+		demo.rtspRunning = true
+		log.Printf("启动RTSP流")
+
+		// 启动RTSP流读取
+		go demo.startRTSPStream(demo.frameBuffer, demo.rtspExitCh)
 	}
 
 	// 注册HTTP处理函数

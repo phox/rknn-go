@@ -321,13 +321,25 @@ func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
 		clientID, d.bufferSize, float64(d.bufferSize)/float64(FPS))
 
 	// 预热缓冲区，等待一定数量的帧被缓存后再开始处理
+	// 但不要无限等待，最多等待5秒
 	preWarmSize := d.bufferSize / 2
 	if preWarmSize < 1 {
 		preWarmSize = 1
 	}
 
 	log.Printf("客户端 #%d: 预热缓冲区，等待 %d 帧被缓存...", clientID, preWarmSize)
+
+	// 设置最大等待时间为5秒
+	maxWaitTime := 5 * time.Second
+	waitStart := time.Now()
+
 	for len(d.frameBuffer) < preWarmSize {
+		// 检查是否超时
+		if time.Since(waitStart) > maxWaitTime {
+			log.Printf("客户端 #%d: 预热超时，当前缓冲区有 %d 帧，开始处理视频流", clientID, len(d.frameBuffer))
+			break
+		}
+
 		time.Sleep(100 * time.Millisecond)
 		// 检查客户端是否已断开连接
 		select {
@@ -340,7 +352,12 @@ func (d *Demo) Stream(w http.ResponseWriter, r *http.Request) {
 			// 继续等待
 		}
 	}
-	log.Printf("客户端 #%d: 缓冲区预热完成，开始处理视频流", clientID)
+
+	if len(d.frameBuffer) >= preWarmSize {
+		log.Printf("客户端 #%d: 缓冲区预热完成，开始处理视频流", clientID)
+	} else {
+		log.Printf("客户端 #%d: 缓冲区预热部分完成，当前有 %d 帧，开始处理视频流", clientID, len(d.frameBuffer))
+	}
 
 loop:
 	for {
@@ -459,17 +476,11 @@ func (d *Demo) handleClientDisconnect(clientID int) {
 	d.clientCount--
 	log.Printf("客户端 #%d 已断开连接，当前剩余客户端数量: %d", clientID, d.clientCount)
 
-	// 如果没有更多客户端，关闭RTSP流
-	if d.clientCount <= 0 {
-		if d.rtspRunning && d.rtspExitCh != nil {
-			log.Printf("最后一个客户端已断开连接，关闭RTSP流")
-			// 发送信号关闭RTSP流
-			d.rtspExitCh <- struct{}{}
-			// 重置状态
-			d.rtspRunning = false
-			// 重置客户端计数（以防万一）
-			d.clientCount = 0
-		}
+	// 注意：不再关闭RTSP流，即使没有客户端连接也要保持RTSP流运行
+	// 这样可以确保下一个客户端连接时能够立即获得视频流
+	if d.clientCount < 0 {
+		// 重置客户端计数（以防万一）
+		d.clientCount = 0
 	}
 }
 
@@ -537,29 +548,13 @@ func (d *Demo) startRTSPStream(framesCh chan gocv.Mat, exitCh chan struct{}) {
 	statsTicker := time.NewTicker(30 * time.Second)
 	defer statsTicker.Stop()
 
-loop:
 	for {
 		select {
 		case <-exitCh:
-			log.Printf("关闭RTSP流")
-			// 清理帧缓冲区中的所有Mat对象，防止内存泄漏
-			d.frameBufferMutex.Lock()
-			if d.frameBuffer != nil {
-				// 清空缓冲区中的所有帧
-				log.Printf("清理帧缓冲区中的 %d 个帧", len(d.frameBuffer))
-				for len(d.frameBuffer) > 0 {
-					select {
-					case frame := <-d.frameBuffer:
-						// 关闭Mat对象释放内存
-						frame.Close()
-					default:
-						// 缓冲区已空
-						break
-					}
-				}
-			}
-			d.frameBufferMutex.Unlock()
-			break loop
+			log.Printf("收到退出信号，但RTSP流将继续运行以保持服务可用性")
+			// 注意：不再关闭RTSP流，即使收到退出信号也要保持运行
+			// 这样可以确保服务持续可用
+			continue
 
 		case <-statsTicker.C:
 			// 打印缓冲区统计信息
